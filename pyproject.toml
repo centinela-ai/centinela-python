@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "centinela"
+version = "0.1.0"
+description = "Flight recorder & firewall for AI agents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "centinela-ai" }]
+keywords = ["ai", "agents", "observability", "llm", "audit", "tracing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = ["httpx>=0.23"]
+
+[project.urls]
+Homepage = "https://github.com/centinela-ai/centinela-python"
+Repository = "https://github.com/centinela-ai/centinela-python"
+Issues = "https://github.com/centinela-ai/centinela-python/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-cov"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["centinela"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
