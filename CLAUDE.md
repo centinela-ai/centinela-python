@@ -4,14 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-The SDK (Bloque 1) and the backend (Bloque 2) are implemented. The `centinela` package lives at the repo root; the closed-source ingestion/query API lives in `backend/`. Dashboard and landing (Bloques 3–4) are not in this repo — see "Wider product" below. The sections below describe the intended design; keep them in sync as code evolves.
+The SDK (Bloque 1) and the backend (Bloque 2) are implemented. **This repo is now the SDK only** — the `centinela` package lives at the repo root. The closed-source ingestion/query API (Bloque 2) was split out into its own repository (`centinela-backend`, a sibling directory `../centinela-backend`); it is no longer in this repo. Dashboard and landing (Bloques 3–4) are also separate — see "Wider product" below. The sections below describe the intended design; keep them in sync as code evolves.
 
 ### Layout
 
 - `centinela/` — the SDK package. `client.py` (the `Centinela` entry point), `trace.py` (the `trace`/`log_action` API + the active-trace `contextvars`), `transport.py` (async queue + background flush thread, fail-open delivery, `stdout` mode), `events.py` (the `Event` dataclass and its JSON contract), `config.py` (env-var resolution; dev endpoint defaults to `http://localhost:8000` when `CENTINELA_ENV=dev`), `errors.py`.
 - `centinela/integrations/` — `wrap()` auto-instrumentation. `__init__.py` does framework detection by module name + duck typing (no framework is an import-time dependency); `openai.py` / `anthropic.py` patch the client's `create` method; `langchain.py` builds a `BaseCallbackHandler` lazily; `_common.py` has the shared span emitter that attaches to the active trace or starts a standalone one.
 - `tests/` — SDK pytest. `conftest.py` provides a `captured` fixture (a client whose transport is swapped for an in-memory capture) used to assert on emitted events without a network backend.
-- `backend/` — the closed-source FastAPI ingestion/query API. See "Backend" under "Wider product" and `backend/README.md`.
+
+The backend lives in its own repo (`../centinela-backend`); see "Backend" under "Wider product".
 
 ## What this is
 
@@ -81,13 +82,13 @@ CI runs `pytest` across Python 3.9–3.13 (`.github/workflows/ci.yml`). Publishi
 
 ## Wider product
 
-The dashboard and landing live outside this repo. The **backend lives in `backend/`** (closed-source). Summarized here so the SDK's event contract and config stay aligned with their consumers. **Deploy is deliberately simple: one service, no Kubernetes, no microservices.**
+The dashboard, landing, and **backend all live outside this repo** (all closed-source). The backend now has its own repository at `../centinela-backend`. Summarized here so the SDK's event contract and config stay aligned with their consumers. **Deploy is deliberately simple: one service, no Kubernetes, no microservices.**
 
-### Backend (`backend/`) — FastAPI + PostgreSQL 16, runs 100% locally
+### Backend (`../centinela-backend`) — FastAPI + PostgreSQL 16, runs 100% locally
 
-Stack: Python 3.11+, FastAPI, SQLAlchemy 2 + Alembic (psycopg 3 driver), Pydantic 2, typer CLI. Tests use pytest + httpx against a real Postgres (no DB mocks).
+Lives in a separate repo (`centinela-backend`). Stack: Python 3.11+, FastAPI, SQLAlchemy 2 + Alembic (psycopg 3 driver), Pydantic 2, typer CLI. Tests use pytest + httpx against a real Postgres (no DB mocks).
 
-Layout: `app/main.py` (app + body-size middleware), `app/routers/` (`health`, `events`, `traces`), `app/models.py` (`Org`, `ApiKey`, `Event`), `app/schemas.py` (Pydantic ingest/read models), `app/auth.py` (`require_org` dependency), `app/security.py` (key generation + salted SHA-256), `app/config.py`, `app/db.py`. Migrations in `alembic/versions/`. Admin CLI at `cli.py`. Smoke test at `scripts/smoke_e2e.py`.
+Layout (within that repo): `app/main.py` (app + body-size middleware), `app/routers/` (`health`, `events`, `traces`), `app/models.py` (`Org`, `ApiKey`, `Event`), `app/schemas.py` (Pydantic ingest/read models), `app/auth.py` (`require_org` dependency), `app/security.py` (key generation + salted SHA-256), `app/config.py`, `app/db.py`. Migrations in `alembic/versions/`. Admin CLI at `cli.py`. Smoke test at `scripts/smoke_e2e.py`.
 
 Endpoints:
 - `POST /v1/events` — batch ingest (≤ 500). Auth via `X-Centinela-Key`. Validates per event, rejecting only invalid ones: `{"accepted": n, "rejected": [{"index", "error"}]}`.
@@ -103,8 +104,10 @@ Rate limiting in this phase is intentionally just a request-size guard (`CENTINE
 
 ### Backend commands
 
+Run these from a clone of the `centinela-backend` repo (`../centinela-backend`), not this one:
+
 ```bash
-cd backend
+cd ../centinela-backend
 python -m venv .venv && .venv/Scripts/activate   # Windows; source .venv/bin/activate on Unix
 pip install -e ".[dev]"
 alembic upgrade head                              # tables + monthly partitions
