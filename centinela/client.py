@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import atexit
 import logging
-from typing import Any, Optional
+from typing import Any, List, Optional, Set, Union
 
 from .config import resolve_config
 from .events import Event
@@ -12,6 +12,33 @@ from .trace import Trace
 from .transport import Transport
 
 logger = logging.getLogger("centinela")
+
+#: Placeholder written in place of a redacted field value. A visible sentinel
+#: (rather than ``None``) keeps the audit trail honest: the dashboard shows that
+#: something WAS there and was deliberately masked, not merely absent.
+_REDACTED = "[REDACTED]"
+
+
+def _redact_fields(value: Any, keys: Set[str]) -> Any:
+    """Return a copy of ``value`` with any dict key in ``keys`` masked.
+
+    Recurses through nested dicts and lists/tuples so a field is masked at any
+    depth - this matters because real payloads are nested (e.g. the Anthropic
+    ``messages`` input is a list of ``{"role", "content"}`` dicts, and tool
+    inputs/outputs can be arbitrarily nested).
+
+    Never mutates the input. The caller's original objects (which may be the very
+    lists/dicts they passed to their LLM) are left untouched; a redacted copy is
+    built instead.
+    """
+    if isinstance(value, dict):
+        return {
+            k: (_REDACTED if k in keys else _redact_fields(v, keys))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_fields(item, keys) for item in value]
+    return value
 
 
 class Centinela:
@@ -30,11 +57,26 @@ class Centinela:
         api_key: Optional[str] = None,
         project: Optional[str] = None,
         endpoint: Optional[str] = None,
-        redact: bool = False,
+        redact: Union[bool, List[str]] = False,
         disabled: Optional[bool] = None,
         flush_interval: float = 2.0,
         max_batch: int = 20,
     ) -> None:
+        """``redact`` controls what leaves the host process:
+
+        - ``False`` (default): payloads are shipped as-is.
+        - ``True``: ``input`` and ``output`` are dropped entirely - only
+          structure, names, timing and status are shipped.
+        - ``list[str]``: the named dict keys are masked (recursively, at any
+          depth) inside ``input``/``output``; everything else is shipped. Use
+          this to strip known sensitive fields (e.g. ``["email", "ssn"]``) while
+          keeping the rest of the trace useful.
+
+        Note: field redaction masks the *value of named keys* in structured
+        payloads. It does not scrub sensitive substrings embedded in free text
+        (e.g. an email mentioned mid-sentence in a prompt). For that, use
+        ``redact=True``.
+        """
         config = resolve_config(api_key=api_key, endpoint=endpoint, disabled=disabled)
         self.project = project
         self.api_key = config.api_key
@@ -91,9 +133,15 @@ class Centinela:
                 return
             event.project = self.project
             payload = event.to_dict()
-            if self.redact:
+            if self.redact is True:
+                # Full redaction: drop payloads entirely.
                 payload["input"] = None
                 payload["output"] = None
+            elif self.redact:
+                # Field-level redaction: mask named keys, keep the rest.
+                keys = set(self.redact)
+                payload["input"] = _redact_fields(payload["input"], keys)
+                payload["output"] = _redact_fields(payload["output"], keys)
             self._transport.enqueue(payload)
         except Exception as exc:  # pragma: no cover - defensive, fail-open
             logger.warning("centinela: failed to emit event: %s", exc)
