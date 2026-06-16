@@ -6,8 +6,8 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-#: Production default endpoint (placeholder domain, controlled by centinela-ai).
-DEFAULT_ENDPOINT = "https://api.getcentinela.com"
+#: Production default endpoint. Must point to a domain we own (getcentinela.dev).
+DEFAULT_ENDPOINT = "https://api.getcentinela.dev"
 
 #: Default endpoint when CENTINELA_ENV=dev and no endpoint is set explicitly.
 DEV_ENDPOINT = "http://localhost:8000"
