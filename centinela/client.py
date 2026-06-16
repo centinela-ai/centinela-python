@@ -19,7 +19,9 @@ logger = logging.getLogger("centinela")
 _REDACTED = "[REDACTED]"
 
 
-def _redact_fields(value: Any, keys: Set[str]) -> Any:
+def _redact_fields(
+    value: Any, keys: Set[str], found: Optional[Set[str]] = None
+) -> Any:
     """Return a copy of ``value`` with any dict key in ``keys`` masked.
 
     Recurses through nested dicts and lists/tuples so a field is masked at any
@@ -30,14 +32,25 @@ def _redact_fields(value: Any, keys: Set[str]) -> Any:
     Never mutates the input. The caller's original objects (which may be the very
     lists/dicts they passed to their LLM) are left untouched; a redacted copy is
     built instead.
+
+    ``found`` is an optional accumulator: when a set is passed, every key name
+    that was matched and masked is added to it. This lets the caller record
+    *which* sensitive fields were present without changing the masking behaviour
+    or the return value. When ``found`` is ``None`` (default) the function
+    behaves exactly as before.
     """
     if isinstance(value, dict):
-        return {
-            k: (_REDACTED if k in keys else _redact_fields(v, keys))
-            for k, v in value.items()
-        }
+        result = {}
+        for k, v in value.items():
+            if k in keys:
+                if found is not None:
+                    found.add(k)
+                result[k] = _REDACTED
+            else:
+                result[k] = _redact_fields(v, keys, found)
+        return result
     if isinstance(value, (list, tuple)):
-        return [_redact_fields(item, keys) for item in value]
+        return [_redact_fields(item, keys, found) for item in value]
     return value
 
 
@@ -97,9 +110,16 @@ class Centinela:
 
     # -- public API --------------------------------------------------------
 
-    def trace(self, name: str) -> Trace:
-        """Open a trace (agent run) as a context manager."""
-        return Trace(self, name)
+    def trace(self, name: str, ai_disclosed: Optional[bool] = None) -> Trace:
+        """Open a trace (agent run) as a context manager.
+
+        ``ai_disclosed`` declares, once per session, whether an AI-interaction
+        notice was shown to the user (CTL-009). When set, it is stamped onto
+        every action logged under this trace via ``metadata["_centinela"]``.
+        Leave it ``None`` (default) when there is no disclosure to report — the
+        control then stays ``not_applicable`` instead of being treated as a pass.
+        """
+        return Trace(self, name, ai_disclosed=ai_disclosed)
 
     def wrap(self, target: Any) -> Any:
         """Automatically instrument a supported agent or LLM client.
@@ -138,10 +158,28 @@ class Centinela:
                 payload["input"] = None
                 payload["output"] = None
             elif self.redact:
-                # Field-level redaction: mask named keys, keep the rest.
+                # Field-level redaction: mask named keys, keep the rest, and
+                # record which sensitive fields were present (CTL-004 signal).
                 keys = set(self.redact)
-                payload["input"] = _redact_fields(payload["input"], keys)
-                payload["output"] = _redact_fields(payload["output"], keys)
+                found: Set[str] = set()
+                payload["input"] = _redact_fields(payload["input"], keys, found)
+                payload["output"] = _redact_fields(payload["output"], keys, found)
+                if found:
+                    present = sorted(found)
+                    # In list-redact mode every detected field IS masked, so
+                    # present == masked. Emitting both makes the backend's
+                    # measurement explicit rather than inferred. Build a fresh
+                    # metadata dict — to_dict() returns the Event's own metadata
+                    # reference, so we must not mutate it in place.
+                    base_meta = payload.get("metadata") or {}
+                    payload["metadata"] = {
+                        **base_meta,
+                        "_centinela": {
+                            **base_meta.get("_centinela", {}),
+                            "sensitive_fields_present": present,
+                            "sensitive_fields_masked": present,
+                        },
+                    }
             self._transport.enqueue(payload)
         except Exception as exc:  # pragma: no cover - defensive, fail-open
             logger.warning("centinela: failed to emit event: %s", exc)
