@@ -92,3 +92,60 @@ def test_redaction_does_not_mutate_caller_data():
         t.log_action(type="llm_call", name="x", input=original)
     assert original[0]["content"] == "informacion confidencial"  # intact
     assert captured[0]["input"][0]["content"] == "[REDACTED]"  # copy masked
+
+
+# --- PII signal capture (CTL-004) ------------------------------------------
+# In list-redact mode every detected sensitive field IS masked, so the SDK
+# records present == masked. The backend reads these from metadata["_centinela"].
+
+def test_pii_capture_records_present_and_masked():
+    c, captured = _client_capturing(redact=["email", "ssn"])
+    with c.trace("run") as t:
+        t.log_action(
+            type="tool_call",
+            name="x",
+            input={"email": "a@b.com"},
+            output={"ssn": "123", "note": "ok"},
+        )
+    cen = captured[0]["metadata"]["_centinela"]
+    assert cen["sensitive_fields_present"] == ["email", "ssn"]
+    assert cen["sensitive_fields_masked"] == ["email", "ssn"]
+
+
+def test_pii_capture_only_lists_fields_actually_found():
+    """Declaring keys that never appear produces no signal for those keys."""
+    c, captured = _client_capturing(redact=["email", "ssn", "passport"])
+    with c.trace("run") as t:
+        t.log_action(type="tool_call", name="x", input={"email": "a@b.com"})
+    cen = captured[0]["metadata"]["_centinela"]
+    assert cen["sensitive_fields_present"] == ["email"]
+    assert cen["sensitive_fields_masked"] == ["email"]
+
+
+def test_no_pii_present_emits_no_centinela():
+    """If no declared field appears, no _centinela namespace is added."""
+    c, captured = _client_capturing(redact=["email"])
+    with c.trace("run") as t:
+        t.log_action(type="tool_call", name="x", input={"amount": 100})
+    assert "_centinela" not in captured[0]["metadata"]
+
+
+def test_redact_true_does_not_emit_pii_signal():
+    """Full redaction drops payloads entirely → no field-name signal (n/a)."""
+    c, captured = _client_capturing(redact=True)
+    with c.trace("run") as t:
+        t.log_action(type="tool_call", name="x", input={"email": "a@b.com"})
+    assert "_centinela" not in captured[0]["metadata"]
+
+
+def test_pii_capture_does_not_mutate_event_metadata():
+    """Injecting _centinela must build a fresh metadata dict, not mutate the
+    caller's. We assert the user's own metadata key survives alongside it."""
+    c, captured = _client_capturing(redact=["email"])
+    with c.trace("run") as t:
+        t.log_action(
+            type="tool_call", name="x", input={"email": "a@b.com"}, model="claude"
+        )
+    meta = captured[0]["metadata"]
+    assert meta["model"] == "claude"
+    assert meta["_centinela"]["sensitive_fields_present"] == ["email"]
