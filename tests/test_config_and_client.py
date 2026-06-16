@@ -4,6 +4,19 @@ from centinela import Centinela
 from centinela.config import DEFAULT_ENDPOINT, DEV_ENDPOINT, resolve_config
 
 
+def test_default_endpoint_is_own_domain():
+    """DEFAULT_ENDPOINT must point to a domain we own (getcentinela.dev).
+
+    Regression guard: getcentinela.com is a third-party domain — telemetry
+    must never be sent there by default.  If this test fails, someone changed
+    DEFAULT_ENDPOINT back to a domain we do not control.
+    """
+    assert DEFAULT_ENDPOINT == "https://api.getcentinela.dev", (
+        f"DEFAULT_ENDPOINT is {DEFAULT_ENDPOINT!r}; must be "
+        "'https://api.getcentinela.dev' (a domain we own, not a third party's)"
+    )
+
+
 def test_explicit_args_take_precedence(monkeypatch):
     monkeypatch.setenv("CENTINELA_API_KEY", "env-key")
     monkeypatch.setenv("CENTINELA_ENDPOINT", "https://env.example")
