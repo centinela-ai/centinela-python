@@ -219,3 +219,6 @@ __marimo__/
 
 # Internal dev notes (never ship)
 CLAUDE.md
+
+# Claude Code local config
+.claude/
